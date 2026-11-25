@@ -16,3 +16,10 @@ test('Language follows browser preferences unless explicitly chosen, with an Eng
 test('Bookmark import instructions and failures are localized', () => {
   for (const key of ['Import bookmarks', 'Use folder names as tags', 'Add to spreadsheet', 'Bookmark access was not granted.']) assert.notEqual(i18n.t(key, 'ja'), key);
 });
+
+test('Portal and extension settings have distinct localized names', () => {
+  assert.equal(i18n.t('Portal settings', 'ja'), 'ポータルの設定');
+  assert.equal(i18n.t('Extension settings', 'ja'), '拡張機能の設定');
+  assert.equal(i18n.t('Portal settings', 'en'), 'Portal settings');
+  assert.equal(i18n.t('Extension settings', 'en'), 'Extension settings');
+});

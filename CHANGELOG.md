@@ -2,6 +2,20 @@
 
 All notable changes to My Portal Extension (formerly Alcove) are documented here. Versions follow Semantic Versioning. GitHub releases are development builds; Chrome Web Store publication has not started.
 
+## [0.4.0] - 2026-11-26
+
+### Added
+
+- Negotiated portal navigation in a compact extension header, with synchronized tabs, language labels and a calendar pin indicator.
+- Navigation-only integration for localhost previews, retaining production-only bookmark import permissions.
+- Fallback to the portal header when navigation negotiation is unsupported or incomplete.
+
+### Changed
+
+- Use Skeleton App Bar, segmented controls, popovers and tooltips, with standard button and divider styles, plus a Skeleton Combobox page picker in the shared header.
+- Distinguish portal settings from extension settings; retain calendar pin controls inside the portal.
+- Consolidate portal navigation and extension controls into one header; remove the footer wordmark. Keep blackout directly accessible and group other controls in a click-open menu.
+
 ## [0.3.0] - 2026-11-26
 
 ### Added

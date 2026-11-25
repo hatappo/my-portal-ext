@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { collectBookmarks, bookmarkFolders, bookmarkTsv, importResult } from '../extension/bookmarks.ts';
-import { isPortalOrigin, readyChannel, requestPortal } from '../extension/portal-bridge.ts';
+import { isPortalOrigin, readyChannel, requestPortal, readNavigationState, matchesChannel, sendNavigation } from '../extension/portal-bridge.ts';
 const tree = [{ id: '0', title: '', children: [{ id: '1', title: 'Work', children: [{ id: '2', title: 'A', url: 'https://a.test/' }, { id: '3', title: 'Sub,folder', children: [{ id: '4', title: 'B', url: 'https://b.test/' }] }] }, { id: '5', title: 'Private', children: [{ id: '6', title: 'Secret', url: 'https://private.test/' }] }] }];
 test('Only the chosen folder and descendants are collected, with optional folder tags', () => {
   assert.equal(bookmarkFolders(tree).length, 3);
@@ -44,4 +44,28 @@ test('Import replies must match the bound frame, origin, nonce and request ID', 
   dispatch({ ...valid, data: { ...valid.data, nonce: '0'.repeat(32) } });
   await Promise.resolve(); assert.equal(settled, false);
   dispatch(valid); assert.deepEqual(await result, { ok: true });
+});
+
+
+test('Navigation state is bounded and local channels never receive bookmark authority', async t => {
+  const previous = globalThis.window; globalThis.window = {};
+  t.after(() => { if (previous === undefined) delete globalThis.window; else globalThis.window = previous; });
+  const nonce = 'a'.repeat(32), source = { postMessage() {} };
+  const event = { source, origin: 'http://localhost:4173', data: { type: 'gas-portal:side-panel-ready', nonce, capabilities: ['navigation-v1', 'bookmarks-v1'] } };
+  assert.equal(readyChannel(event, nonce), null);
+  assert.equal(readyChannel(event, nonce, 'http://localhost:4174'), null);
+  assert.equal(readyChannel({ ...event, origin: 'https://script.google.com' }, nonce, event.origin), null, 'A local page redirect must not acquire production capabilities');
+  assert.equal(readyChannel({ ...event, origin: 'https://evil.test' }, nonce, 'https://evil.test'), null);
+  const channel = readyChannel(event, nonce, event.origin);
+  assert.deepEqual(channel.capabilities, ['navigation-v1']);
+  await assert.rejects(requestPortal(channel, 'import', {}));
+  assert.equal(matchesChannel(event, channel), true);
+  assert.equal(matchesChannel({ ...event, source: {} }, channel), false);
+  assert.equal(matchesChannel({ ...event, data: { ...event.data, nonce: 'b'.repeat(32) } }, channel), false);
+  const state = { selected: 'links', language: 'ja', attached: false, pinned: false, tabs: ['links','inbox-and-tasks','calendar','settings'].map(id => ({ id, label: id })) };
+  assert.deepEqual(readNavigationState(state), state);
+  for (const invalid of [null, { ...state, selected: 'arbitrary' }, { ...state, attached: 'true' }, { ...state, tabs: [...state.tabs, state.tabs[0]] }, { ...state, tabs: state.tabs.map(tab => ({...tab,label:'x'.repeat(101)})) }]) assert.equal(readNavigationState(invalid), null);
+  let sent; source.postMessage = (data, origin) => { sent = {data,origin}; };
+  sendNavigation(channel, { action: 'select', tab: 'settings' });
+  assert.equal(sent.origin, event.origin); assert.equal(sent.data.nonce, nonce);
 });
