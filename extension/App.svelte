@@ -1,6 +1,11 @@
 <script lang="ts">
+  import { AppBar, Popover } from '@skeletonlabs/skeleton-svelte';
+  import Hint from './Hint.svelte';
+  import { tooltipAttributes } from './tooltip-attributes';
   import { i18n } from './i18n.js';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
+  import PortalNavigation from './PortalNavigation.svelte';
+  import PageSwitcher from './PageSwitcher.svelte';
   import { browser } from 'wxt/browser';
   import externalLinkIcon from './assets/external-link.svg?raw';
   import refreshIcon from './assets/refresh-cw.svg?raw';
@@ -8,9 +13,9 @@
   import eyeIcon from './assets/eye.svg?raw';
   import eyeOffIcon from './assets/eye-off.svg?raw';
   import BookmarkImport from './BookmarkImport.svelte';
-  import { readyChannel, requestPortal, randomNonce, type PortalChannel } from './portal-bridge';
+  import { readyChannel, requestPortal, randomNonce, matchesChannel, readNavigationState, sendNavigation, type NavigationState, type NavigationTab, type PortalChannel } from './portal-bridge';
   import ConnectionSettings from './ConnectionSettings.svelte';
-  import { emptyConfig, restoreConfig, pageRequest, pageLabel, isPortalUrl, type PanelConfig } from './config';
+  import { emptyConfig, restoreConfig, pageRequest, pageLabel, isPortalUrl, isLocalPreviewUrl, type PanelConfig } from './config';
   let languagePreference = $state<'auto' | 'ja' | 'en'>('auto');
   let browserLanguages = $state(Array.from(navigator.languages));
   let languageBusy = $state(false);
@@ -19,11 +24,28 @@
   $effect(() => { document.documentElement.lang = language; });
   const t = (key: string) => i18n.t(key, language);
   const extensionId = browser.runtime.id;
-  const extensionName = browser.runtime.getManifest().name;
   // Conceal content until the session preference has been restored: no startup flash.
   let privacyMode = $state(true), privacyReady = $state(false), privacyBusy = $state(false);
   let privacyError = $state('');
   let lastPrivacyClick: number | undefined;
+  let controlsOpen = $state(false);
+  function closeControls() { controlsOpen = false; }
+  $effect(() => {
+    const open = controlsOpen && !concealed;
+    void tick().then(() => {
+      if (open !== (controlsOpen && !concealed)) return;
+      const layer = document.getElementById('panel-controls-layer');
+      // Keep the menu above cross-origin iframe compositor surfaces.
+      if (open) layer?.showPopover(); else layer?.hidePopover();
+    });
+  });
+  function controlsFinalFocus() {
+    // Preserve focus if another action already moved it while the popover closed.
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body && !active.closest('#panel-controls')) return active;
+    return document.getElementById('panel-controls-toggle');
+  }
+  $effect(() => { if (concealed) closeControls(); });
   const concealed = $derived(!privacyReady || privacyMode);
   const privacyLabel = $derived(t(privacyMode ? 'Double-click to show content' : 'Click to hide content'));
   async function togglePrivacy(event: MouseEvent) {
@@ -55,17 +77,30 @@
   // Cross-origin Window handles must never be wrapped in a deep reactive proxy.
   let channels = $state.raw<Record<string, PortalChannel>>({});
   const activeChannel = $derived(activePage ? channels[activePage.id] : undefined);
+  let navigation = $state<Record<string, NavigationState>>({});
+  const activeNavigation = $derived(activePage ? navigation[activePage.id] : undefined);
+  const canImport = $derived(Boolean(activeChannel?.capabilities.includes('bookmarks-v1')));
+  const navigationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  function clearNavigationTimer(id: string) { clearTimeout(navigationTimers.get(id)); navigationTimers.delete(id); }
+  function forgetNavigation(id: string) { clearNavigationTimer(id); navigation = Object.fromEntries(Object.entries(navigation).filter(([key]) => key !== id)); }
+  function commandNavigation(command: {action: 'select'; tab: NavigationTab}) {
+    if (!activeChannel || concealed || editing || importing || !activePage) return;
+    try { sendNavigation(activeChannel, command); }
+    catch { forgetNavigation(activePage.id); }
+  }
   let frameVersion = 0;
   const frameUrl = $derived(frames.find(frame => frame.id === config.activePageId)?.url || '');
   let editing = $state(true), error = $state(''), busy = $state(true), loaded = $state(false);
   function connect(force = false) {
     // Retain visited pages. Removed pages or edited URLs discard only their own frame.
     frames = frames.filter(frame => config.pages.some(page => page.id === frame.id && page.url === frame.sourceUrl));
+    for (const id of Object.keys(navigation)) if (!frames.some(frame => frame.id === id)) forgetNavigation(id);
     channels = Object.fromEntries(Object.entries(channels).filter(([id]) => frames.some(frame => frame.id === id)));
     if (!activePage || (!force && frames.some(frame => frame.id === activePage.id))) return;
     const nonce = randomNonce();
     const url = pageRequest(config, nonce);
     if (!url) return;
+    forgetNavigation(activePage.id);
     const next = { id: activePage.id, sourceUrl: activePage.url, url, version: ++frameVersion, nonce };
     channels = Object.fromEntries(Object.entries(channels).filter(([id]) => id !== next.id));
     const existing = frames.findIndex(frame => frame.id === next.id);
@@ -92,10 +127,8 @@
     } catch { throw new Error('Could not save the connection. Try again.'); }
     finally { busy = false; }
   }
-  async function switchPage(event: Event) {
-    const select = event.currentTarget as HTMLSelectElement;
-    const id = select.value;
-    if (busy || !config.pages.some(page => page.id === id)) { select.value = config.activePageId; return; }
+  async function switchPage(id: string) {
+    if (busy || !config.pages.some(page => page.id === id)) return;
     busy = true;
     try {
       const next = { ...$state.snapshot(config), activePageId: id };
@@ -103,8 +136,8 @@
       config = next;
       error = '';
       connect();
+      closeControls();
     } catch {
-      select.value = config.activePageId;
       error = 'Could not save the connection. Try again.';
     } finally { busy = false; }
   }
@@ -131,11 +164,37 @@
     const updateBrowserLanguage = () => { browserLanguages = Array.from(navigator.languages); };
     window.addEventListener('languagechange', updateBrowserLanguage);
     const receiveReady = (event: MessageEvent) => {
-      const frame = frames.find(frame => frame.nonce === event.data?.nonce && isPortalUrl(frame.sourceUrl));
+      const frame = frames.find(frame => frame.nonce === event.data?.nonce && (isPortalUrl(frame.sourceUrl) || isLocalPreviewUrl(frame.sourceUrl)));
       if (!frame) return;
-      const channel = readyChannel(event, frame.nonce);
       const previous = channels[frame.id];
-      if (channel && (!previous || previous.source === channel.source)) channels = { ...channels, [frame.id]: channel };
+      if (event.data?.type === 'my-portal:navigation-state') {
+        if (!previous || !matchesChannel(event, previous) || !previous.capabilities.includes('navigation-v1')) return;
+        const state = readNavigationState(event.data.state);
+        if (!state) return;
+        clearNavigationTimer(frame.id);
+        if (state.attached) navigation = { ...navigation, [frame.id]: state };
+        else forgetNavigation(frame.id);
+        return;
+      }
+      const local = isLocalPreviewUrl(frame.sourceUrl);
+      if (local && !Array.from(document.querySelectorAll('iframe')).some(el => el.src === frame.url && el.contentWindow === event.source)) return;
+      const channel = readyChannel(event, frame.nonce, local ? new URL(frame.sourceUrl).origin : undefined);
+      if (!channel || (previous && previous.source !== channel.source)) return;
+      channels = { ...channels, [frame.id]: channel };
+      const state = channel.capabilities.includes('navigation-v1') ? readNavigationState(event.data.navigation) : null;
+      if (!state) return;
+      navigation = { ...navigation, [frame.id]: state };
+      // Render controls before asking the portal to hide its own header.
+      void tick().then(() => {
+        if (disposed || channels[frame.id] !== channel) return;
+        clearNavigationTimer(frame.id);
+        navigationTimers.set(frame.id, setTimeout(() => {
+          forgetNavigation(frame.id);
+          try { sendNavigation(channel, { action: 'disconnect' }); } catch { /* Header remains available if negotiation never succeeded. */ }
+        }, 5000));
+        try { sendNavigation(channel, { action: 'connect' }); }
+        catch { forgetNavigation(frame.id); }
+      });
     };
     window.addEventListener('message', receiveReady);
     let disposed = false;
@@ -162,6 +221,8 @@
       .finally(() => { if (!disposed) busy = false; });
     return () => {
       disposed = true;
+      for (const channel of Object.values(channels)) { try { sendNavigation(channel, { action: 'disconnect' }); } catch { /* Frame may have gone away. */ } }
+      for (const id of navigationTimers.keys()) clearNavigationTimer(id);
       window.removeEventListener('languagechange', updateBrowserLanguage);
       window.removeEventListener('message', receiveReady);
       browser.storage.onChanged.removeListener(syncPrivacy);
@@ -169,8 +230,61 @@
   });
 </script>
 
+<Popover open={controlsOpen && !concealed} onOpenChange={event => { controlsOpen = event.open && !concealed; }}
+  ids={{ trigger: 'panel-controls-toggle', content: 'panel-controls', positioner: 'panel-controls-layer' }} autoFocus={false} finalFocusEl={controlsFinalFocus} portalled={false}
+  positioning={{ placement: 'bottom-end', gutter: 8, overflowPadding: 8, strategy: 'fixed' }}>
+<AppBar class={'extension-header' + (concealed ? ' concealed' : '')}>
+  <AppBar.Toolbar class="header-toolbar">
+  <AppBar.Headline class="header-content" inert={concealed} aria-hidden={concealed}>
+    {#if !editing && !importing && activeNavigation}
+      <PortalNavigation state={activeNavigation} onselect={tab => commandNavigation({ action: 'select', tab })} />
+    {:else}
+      <span class="page-title" title={activePage ? pageLabel(activePage) : ''}>{editing ? t('Extension settings') : importing ? t('Import bookmarks') : activePage ? pageLabel(activePage) : ''}</span>
+    {/if}
+  </AppBar.Headline>
+  <AppBar.Trail class="header-actions" aria-label={t('Side panel controls')}>
+    <Hint text={privacyLabel} triggerId="privacy-toggle" disabled={controlsOpen}>
+      {#snippet children(attributes)}
+    <button {...attributes} id="privacy-toggle" class="btn-icon btn-icon-base header-icon hover:preset-tonal" disabled={!privacyReady || privacyBusy} aria-pressed={privacyMode} aria-label={privacyLabel} aria-describedby="privacy-keyboard-help" onclick={togglePrivacy} onblur={() => { lastPrivacyClick = undefined; }} onkeydown={(event) => { if (event.repeat && (event.key === 'Enter' || event.key === ' ')) event.preventDefault(); }}>
+      <span class="privacy-current" aria-hidden="true">{@html privacyMode ? eyeOffIcon : eyeIcon}</span>
+      <span class="privacy-action" aria-hidden="true">{@html privacyMode ? eyeIcon : eyeOffIcon}</span>
+    </button>
+      {/snippet}
+    </Hint>
+    <Hint text={t('More options')} triggerId="panel-controls-toggle" disabled={controlsOpen || concealed}>
+      {#snippet children(attributes)}
+        <Popover.Trigger {...tooltipAttributes(attributes)} id="panel-controls-toggle" class="btn-icon btn-icon-base header-icon hover:preset-tonal aria-expanded:preset-tonal" disabled={concealed || busy} aria-label={t('More options')}>
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+        </Popover.Trigger>
+      {/snippet}
+    </Hint>
+  </AppBar.Trail>
+  </AppBar.Toolbar>
+  {#if controlsOpen && !concealed}<button class="controls-dismiss" tabindex="-1" aria-label={t('Close options')} onclick={closeControls}></button>{/if}
+  <Popover.Positioner popover="manual" class="controls-positioner">
+    <Popover.Content id="panel-controls" class="controls-sheet card preset-filled-surface-50-950 preset-outlined-surface-200-800 shadow-xl" aria-label={t('Side panel controls')}>
+      {#if config.pages.length}
+      <div class="page-chooser">
+        <PageSwitcher pages={config.pages} value={config.activePageId} label={t('Switch page')}
+          disabled={concealed || editing || importing || busy} active={controlsOpen} {concealed} onselect={switchPage} />
+      </div>
+    {/if}
+    <div class="control-list" aria-label={t('Side panel controls')}>
+      <button class="btn btn-sm hover:preset-tonal control-item" disabled={!activePage || editing || importing || concealed} onclick={() => { closeControls(); connect(true); }}>{@html refreshIcon}<span>{t('Reload')}</span></button>
+      <button class="btn btn-sm hover:preset-tonal control-item" disabled={!activePage || concealed} onclick={() => { closeControls(); openTab(); }}>{@html externalLinkIcon}<span>{t('Open tab')}</span></button>
+      <button id="import-bookmarks" class="btn btn-sm hover:preset-tonal control-item" disabled={!canImport || importing || editing || concealed || busy} onclick={() => { closeControls(); importing = true; }} aria-label={t('Import bookmarks')} title={t(canImport ? 'Import bookmarks' : 'Open an updated portal to import bookmarks.')}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2zM12 6v7m-3-3 3 3 3-3" /></svg><span>{t('Import bookmarks')}</span></button>
+      <hr class="hr my-1" />
+      <button class="btn btn-sm hover:preset-tonal control-item settings-control" disabled={concealed || importing || busy} aria-expanded={editing} aria-controls="extension-settings" onclick={() => { closeControls(); editing = !editing; }}>{@html settingsIcon}<span>{t('Extension settings')}</span></button>
+    </div>
+    </Popover.Content>
+  </Popover.Positioner>
+  <span id="privacy-keyboard-help" class="sr-only">{t('Press Enter or Space once to hide content, twice to show it.')}</span>
+  {#if privacyError}<p class="privacy-error" role="alert">{t(privacyError)}</p>{/if}
+</AppBar>
+</Popover>
+
 <div class="panel-content" class:concealed>
-<div class="panel-body" inert={concealed} aria-hidden={concealed}>
+<div class="panel-body" inert={concealed || controlsOpen} aria-hidden={concealed}>
 {#if importing}
   <BookmarkImport {t} pageName={activePage ? pageLabel(activePage) : ''} request={bookmarkRequest} onclose={() => { importing = false; }} />
 {:else if editing}
@@ -202,24 +316,3 @@
 
 </div>
 </div>
-<footer class:concealed>
-  <span class="extension-name">{extensionName}</span>
-  {#if config.pages.length}
-    <select class="select page-switcher" aria-label={t('Switch page')} value={config.activePageId} disabled={concealed || editing || importing || busy} onchange={switchPage}>
-      {#each config.pages as page (page.id)}<option value={page.id}>{concealed ? '•••' : pageLabel(page)}</option>{/each}
-    </select>
-  {/if}
-  <nav aria-label={t('Side panel controls')}>
-    <button id="privacy-toggle" class="btn icon-button" disabled={!privacyReady || privacyBusy} aria-pressed={privacyMode} aria-label={privacyLabel} title={privacyLabel} aria-describedby="privacy-keyboard-help" onclick={togglePrivacy} onblur={() => { lastPrivacyClick = undefined; }} onkeydown={(event) => { if (event.repeat && (event.key === 'Enter' || event.key === ' ')) event.preventDefault(); }}>
-      <span class="privacy-current" aria-hidden="true">{@html privacyMode ? eyeOffIcon : eyeIcon}</span>
-      <span class="privacy-action" aria-hidden="true">{@html privacyMode ? eyeIcon : eyeOffIcon}</span>
-    </button>
-    <button id="import-bookmarks" class="btn icon-button" disabled={!activeChannel || importing || editing || concealed || busy} onclick={() => { importing = true; }} aria-label={t('Import bookmarks')} title={t(activeChannel ? 'Import bookmarks' : 'Open an updated portal to import bookmarks.')}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2zM12 6v7m-3-3 3 3 3-3" /></svg></button>
-    <button class="btn icon-button" disabled={!activePage || concealed} onclick={openTab} aria-label={t('Open tab')} title={t('Open tab')}>{@html externalLinkIcon}</button>
-    <button class="btn icon-button" disabled={!activePage || editing || importing || concealed} onclick={() => connect(true)} aria-label={t('Reload')} title={t('Reload')}>{@html refreshIcon}</button>
-    <button class="btn icon-button" disabled={concealed || importing || busy} aria-expanded={editing} aria-controls="extension-settings" onclick={() => { editing = !editing; }} aria-label={t('Settings')} title={t('Settings')}>{@html settingsIcon}</button>
-
-  </nav>
-  <span id="privacy-keyboard-help" class="sr-only">{t('Press Enter or Space once to hide content, twice to show it.')}</span>
-  {#if privacyError}<p class="privacy-error" role="alert">{t(privacyError)}</p>{/if}
-</footer>

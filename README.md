@@ -4,7 +4,7 @@ A Chrome Side Panel companion for [My Portal](https://github.com/hatappo/my-port
 
 ## Features
 
-- Up to 20 pages, with optional names, a footer selector, and drag/keyboard reordering.
+- Up to 20 pages, with optional names, a header menu, and drag/keyboard reordering.
 - Lazy loading and retained page state while the panel document remains open.
 - Ordinary deployed GAS URLs: connection parameters are handled internally.
 - Selected-folder bookmark import with a preview, duplicate skipping, optional folder tags, and TSV export.
@@ -34,7 +34,7 @@ An unpacked extension's ID and settings storage can change when its directory mo
 
 ## Import Chrome bookmarks
 
-1. Open a connected, updated portal and choose **Import bookmarks** in the footer.
+1. Open a connected, updated portal and choose **Import bookmarks** in the **More options** header menu.
 2. Click **Choose Chrome bookmarks** and grant the optional bookmark permission.
 3. Select a folder. Its descendants are included; other folders are not sent to the portal. Folder names can optionally become tags.
 4. Choose **Preview additions**. Check the destination spreadsheet and sheet, additions, duplicate count, and unsupported URLs.
@@ -50,7 +50,7 @@ A timeout can occur after a successful write. Preview again before retrying; the
 
 - Pages load on first selection and stay mounted when switching or opening settings. Changing a URL or deleting a page discards only that document. Explicit reload affects only the selected page.
 - Chrome can destroy the panel document when closing it. Reopening then reloads the selected page. Hidden pages remain inert, but their scripts and network activity may continue.
-- Local previews accept HTTP URLs on `localhost`, its subdomains, and `127.0.0.1`, with any port (for example, `http://localhost:4173/#links`). Other HTTP hosts, LAN addresses, and embedded credentials are rejected. Local pages do not receive GAS connection parameters or bookmark-import access.
+- Local previews accept HTTP URLs on `localhost`, its subdomains, and `127.0.0.1`, with any port (for example, `http://localhost:4173/#links`). Other HTTP hosts, LAN addresses, and embedded credentials are rejected. Local pages receive navigation connection parameters but never bookmark-import access.
 - Other HTTPS pages still work when they permit embedding. They do not receive portal parameters or access to bookmark import. CSP and `X-Frame-Options` are not bypassed; Chrome internal pages cannot be embedded.
 - Required permissions are `sidePanel` and `storage`, plus limited GAS host access. `bookmarks` is optional and requested only on explicit selection. The extension never modifies Chrome bookmarks.
 - Settings use `chrome.storage.local`; blackout uses `chrome.storage.session`. Imported data is held in memory for the import screen, not stored in extension settings or logged. Only the selected folder's entries are sent to the configured portal.
@@ -73,3 +73,10 @@ Tags must match `package.json`. Pushing a `v*` tag publishes a development ZIP, 
 ## License
 
 MIT. Formerly Alcove, extracted from gas-portal (now My Portal). The cursive A artwork and warm colors are retained. See [NOTICE](NOTICE) for attribution.
+
+
+### Portal navigation in the extension
+
+Updated portals negotiate a compact icon navigation header with the extension. The extension adds `header=external` internally alongside its per-frame connection parameters. The portal hides its own header only after the extension has rendered replacement controls. Tab selection, language labels and calendar pinning follow the portal state; navigation does not reload the iframe or discard drafts. Global page switching, blackout and extension settings remain in the **More options** header menu.
+
+If the portal is older or negotiation fails, its normal header stays available. Local mock previews can negotiate the same navigation on loopback URLs, but cannot receive bookmark-import authority. No additional Chrome permissions or GAS scopes are needed.

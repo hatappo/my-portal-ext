@@ -1,6 +1,12 @@
 // English message keys with Japanese translations.
 /** @type {Record<string, string>} */
 const messages = {
+  "Close options": "操作メニューを閉じる",
+  "More options": "その他の操作",
+  "Portal sections": "ポータルの画面",
+  "Calendar · pinned": "カレンダー · ピン留め中",
+  "Portal settings": "ポータルの設定",
+  "Extension settings": "拡張機能の設定",
   "Selected": "選択中",
   "Import bookmarks": "ブックマークを取り込む",
   "Close import": "取り込みを閉じる",
@@ -64,7 +70,6 @@ const messages = {
   "Reload": "再読み込み",
   "Save and connect": "保存して接続",
   "Cancel": "キャンセル",
-  "Settings": "設定",
   "Saved": "保存しました",
   "Automatic (browser)": "自動（ブラウザの言語）",
   "Language": "表示言語",

@@ -46,7 +46,10 @@ test('Local HTTP previews are allowed without granting GAS connection behavior',
   for (const url of ['http://localhost:4173/#links', 'http://preview.localhost:8080/?x=1', 'http://127.0.0.1:4173/#settings', 'http://localhost/']) {
     assert.equal(normalizePageUrl(url), url);
     const config = validateConfig({ pages: [{ id: 'local', name: '', url }], activePageId: 'local' });
-    assert.equal(pageRequest(config, nonce), url);
+    const request = new URL(pageRequest(config, nonce));
+    assert.equal(request.searchParams.get('header'), 'external');
+    assert.equal(request.searchParams.get('panelNonce'), nonce);
+    assert.equal(normalizePageUrl(request.href), url);
     assert.deepEqual(restoreConfig({ panelConfig: config }), config);
   }
   for (const url of ['http://localhost.example.com/', 'http://evillocalhost/', 'http://127.0.0.1.example.com/', 'http://192.168.1.1/', 'http://0.0.0.0/', 'http://user:secret@localhost/', 'ftp://localhost/']) {

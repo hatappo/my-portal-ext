@@ -16,13 +16,22 @@ export function isPortalUrl(input: string): boolean {
       /^\/(?:macros\/(?:u\/\d+\/)?|a\/(?:macros\/[^/]+\/|[^/]+\/macros\/))s\/[A-Za-z0-9_-]+\/exec$/.test(url.pathname);
   } catch { return false; }
 }
+/** Local development pages may negotiate UI navigation, never bookmark writes. */
+export function isLocalPreviewUrl(input: string): boolean {
+  try {
+    const url = new URL(input);
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password &&
+      (url.hostname === 'localhost' || url.hostname.endsWith('.localhost') || url.hostname === '127.0.0.1');
+  } catch { return false; }
+}
 /** Persist the ordinary page URL, never transport parameters or nonce templates. */
 export function normalizePageUrl(input: string): string | null {
   try {
     const url = new URL(input.trim());
     const localHttp = url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname.endsWith('.localhost') || url.hostname === '127.0.0.1');
     if ((url.protocol !== 'https:' && !localHttp) || url.username || url.password) return null;
-    if (isPortalUrl(url.href)) {
+    if (isPortalUrl(url.href) || isLocalPreviewUrl(url.href)) {
+      url.searchParams.delete('header');
       url.searchParams.delete('sidePanel');
       url.searchParams.delete('panelNonce');
     }
@@ -56,7 +65,8 @@ export function pageRequest(config: PanelConfig, nonce: string): string | null {
   if (!page) return null;
   if (!/^[a-f0-9]{32}$/.test(nonce)) throw new Error('Invalid panel nonce');
   const url = new URL(page.url);
-  if (isPortalUrl(page.url)) {
+  if (isPortalUrl(page.url) || isLocalPreviewUrl(page.url)) {
+    url.searchParams.set('header', 'external');
     url.searchParams.set('sidePanel', '1');
     url.searchParams.set('panelNonce', nonce);
   }
