@@ -858,6 +858,8 @@ test('Page dropdown uses themed options, preserves selection on save failure and
   await chooser.focus();
   await chooser.press('ArrowDown');
   await page.getByRole('listbox').waitFor();
+  // Opening restores the selected highlight on the next animation frame.
+  await page.locator('#page-switcher-options [role=option][data-highlighted]').filter({ hasText: 'First' }).waitFor();
   await chooser.press('End');
   await page.locator('#page-switcher-options [role=option][data-highlighted]').filter({ hasText: 'Second' }).waitFor();
   await chooser.press('Enter');
