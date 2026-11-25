@@ -1,6 +1,21 @@
 # Changelog
 
-All notable changes to Alcove are documented here. Versions follow Semantic Versioning. GitHub releases are development builds; Chrome Web Store publication has not started.
+All notable changes to My Portal Extension (formerly Alcove) are documented here. Versions follow Semantic Versioning. GitHub releases are development builds; Chrome Web Store publication has not started.
+
+## [0.3.0] - 2026-11-26
+
+### Added
+
+- HTTP local previews on localhost, its subdomains, and 127.0.0.1 without relaxing HTTPS requirements for other hosts.
+
+- Selected-folder Chrome bookmark preview and append-only import into My Portal's Links spreadsheet, with optional folder tags and TSV export.
+- Optional bookmark permission, requested only when choosing bookmarks; no tokens or credentials are transferred to the extension.
+
+### Changed
+
+- Rename the project to `my-portal-ext` and make it a dedicated My Portal companion, while keeping multiple HTTPS pages.
+- Accept ordinary portal URLs. Connection parameters and per-frame nonces are added internally; URL templates are no longer a setting.
+- Preserve the original icon and warm footer styling.
 
 ## [0.2.0] - 2026-11-17
 

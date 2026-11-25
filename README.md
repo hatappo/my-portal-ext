@@ -1,55 +1,62 @@
-# Alcove
+# My Portal Extension
 
-Keep your favorite web apps beside your browser tabs.
-
-Alcove is a small Chrome Side Panel extension built with WXT, Svelte, and Skeleton. Register HTTPS pages and switch between them without reloading pages you have already opened. No account or companion server is required.
+A Chrome Side Panel companion for [My Portal](https://github.com/hatappo/my-portal-gas), built with WXT, Svelte, and Skeleton. Keep several portals or HTTPS pages open beside your browser tabs and add Chrome bookmarks to a portal's Links spreadsheet.
 
 ## Features
 
-- Up to 20 pages, with optional names that fall back to the URL host.
-- A compact footer selector, with drag-and-drop and keyboard reordering in settings.
+- Up to 20 pages, with optional names, a footer selector, and drag/keyboard reordering.
 - Lazy loading and retained page state while the panel document remains open.
-- Reload only the selected page, or open its resolved URL in a browser tab.
-- Optional `{nonce}` URL templates, replaced with a fresh random 128-bit hexadecimal value on first load or explicit reload.
-- One-click blackout and double-click reveal for screen sharing, with state shared between panels.
-- English and Japanese controls, following browser language by default.
+- Ordinary deployed GAS URLs: connection parameters are handled internally.
+- Selected-folder bookmark import with a preview, duplicate skipping, optional folder tags, and TSV export.
+- One-click blackout and double-click reveal for screen sharing.
+- English and Japanese controls, following the browser language by default.
 
-## Install a development build
+## Install and connect
 
-Alcove is **not yet published on the Chrome Web Store**. Download a ZIP from [GitHub Releases](https://github.com/hatappo/alcove/releases), extract it into a permanent directory, and load that directory using **Load unpacked** in `chrome://extensions` with Developer mode enabled.
-
-Alternatively, build from source with Node.js 26.13.1 or newer in the 26.x series and npm 12.2.2 or newer:
+The extension is **not yet published on the Chrome Web Store**. Build with Node.js 26.13.1 or newer in the 26.x series and npm 12.2.2 or newer:
 
 ```sh
 npm ci
 npm run build
 ```
 
-Load `extension/.output/chrome-mv3` as an unpacked extension. Open Alcove with its toolbar icon, add a page URL in settings, and save. For development, run `npm run dev`. To package a ZIP, run `npm run zip`.
+Load `extension/.output/chrome-mv3` using **Load unpacked** in `chrome://extensions`. Open **My Portal Extension** from its toolbar button.
 
-After a build, reload the extension in `chrome://extensions`. An unpacked extension's ID can change when its directory changes. Settings belong to that ID and are not automatically transferred to a new ID. Keep the old installation until you have copied its page URLs and checked the new one. Sites using an extension-ID allowlist will need the new ID shown in Alcove settings.
+1. Copy **Extension ID** from extension settings.
+2. Save it in the portal's **Settings → Extension → Additional allowed extension ID**.
+3. Register the portal's ordinary deployed `/exec` URL as a page in the extension. Save and connect.
 
-## Page behavior
+The portal and extension must both include the bookmark-import feature. No query parameters or templates need to be entered. Existing GAS connection URLs are normalized when restored. **Open tab** opens the ordinary URL.
 
-Pages load on first selection and remain mounted when switching or opening settings. Renaming and reordering keep the document; changing a URL or deleting a page discards only that page's document. Reload creates a new document for the selected page.
+Downloadable development ZIPs are published on [GitHub Releases](https://github.com/hatappo/my-portal-ext/releases). Older releases retain their `alcove-…` archive names and behavior. Use `npm run dev` for development or `npm run zip` to package a build.
 
-Chrome can destroy the panel document when closing the panel. Reopening then reloads the selected page. Hidden pages are inert but their scripts and network activity may continue, subject to browser throttling. Alcove is not an always-on notification service.
+An unpacked extension's ID and settings storage can change when its directory moves. Before moving from an Alcove checkout, copy its saved page URLs and extension settings. Load the new directory, register its ID in each portal, and check it before removing the old installation. A future store installation will have a stable ID.
 
-Names can be blank; the URL host is displayed without fetching page titles. Drag the grip to reorder pages, or focus it and press Up/Down. Save to apply changes. Clicking an extension ID selects it for copying. URL fields wrap to show their full contents.
+## Import Chrome bookmarks
 
-`{nonce}` is optional and may appear in the URL path, query, or fragment, but not the hostname. All occurrences use the same value for that page load. Switching back to a retained page keeps its nonce. Percent-encoded `%7Bnonce%7D` is accepted. **Open tab** opens the resolved URL, including its registered parameters.
+1. Open a connected, updated portal and choose **Import bookmarks** in the footer.
+2. Click **Choose Chrome bookmarks** and grant the optional bookmark permission.
+3. Select a folder. Its descendants are included; other folders are not sent to the portal. Folder names can optionally become tags.
+4. Choose **Preview additions**. Check the destination spreadsheet and sheet, additions, duplicate count, and unsupported URLs.
+5. Choose **Add to spreadsheet** to confirm. Existing rows are never edited or deleted. The portal refreshes Links after a successful addition.
 
-## Privacy and limits
+The limit is 1,000 selected bookmarks per import. HTTP(S) URLs only are imported. Duplicate detection compares trimmed URLs exactly, including query strings and fragments, across existing normal, hidden, and related-link rows as well as the selected batch. Each addition becomes a top-level Links entry. Column order is resolved from header names.
 
-- Only HTTPS URLs without embedded usernames or passwords are accepted. Do not put secrets in page URLs.
-- Sites can block embedding with CSP or `X-Frame-Options`. Alcove does not bypass these policies, alter response headers, or inject content scripts.
-- Chrome internal pages such as `chrome://extensions/` cannot be embedded. Open them in a regular tab.
-- Some sites require signing in in a regular tab first, and organization policies may prevent embedding altogether.
-- Permissions are `sidePanel` and `storage`. The existing host permissions for `script.google.com` and `*.googleusercontent.com` are retained for embedded Google authentication/storage behavior; general HTTPS sites do not receive broad host access.
-- Iframe sandbox permissions allow scripts, same-origin behavior, forms, downloads, and external popups, but not arbitrary top-level navigation.
-- Settings are stored in `chrome.storage.local`. Blackout uses `chrome.storage.session`: it survives panel closure but clears on browser restart or extension reload/update.
-- Blackout hides content and disables interaction; it does not log out of sites or stop their network requests. Chrome's own side-panel header is outside the extension's control.
-- Alcove has no analytics, backend, page-content scraping, or site-specific readiness protocol.
+Direct import uses the portal's existing `drive.file` permission: the destination must be editable by this app, normally a spreadsheet created by the portal. Entering an arbitrary spreadsheet ID alone does not grant write access. No Google scopes are added. **Export TSV** is available for manual import when direct writing is unavailable. It exports only additions after a successful preview, or all selected HTTP(S) entries before preview; the latter has not been checked against the sheet. TSV includes column headers, so paste data rows in the corresponding columns rather than replacing an existing header.
+
+A timeout can occur after a successful write. Preview again before retrying; the portal rechecks current URLs under a lock before appending. Imports through the same portal project are serialized. Separate GAS projects and manual spreadsheet edits do not share that lock, so avoid simultaneous imports or column changes in those contexts.
+
+## Page behavior and privacy
+
+- Pages load on first selection and stay mounted when switching or opening settings. Changing a URL or deleting a page discards only that document. Explicit reload affects only the selected page.
+- Chrome can destroy the panel document when closing it. Reopening then reloads the selected page. Hidden pages remain inert, but their scripts and network activity may continue.
+- Local previews accept HTTP URLs on `localhost`, its subdomains, and `127.0.0.1`, with any port (for example, `http://localhost:4173/#links`). Other HTTP hosts, LAN addresses, and embedded credentials are rejected. Local pages do not receive GAS connection parameters or bookmark-import access.
+- Other HTTPS pages still work when they permit embedding. They do not receive portal parameters or access to bookmark import. CSP and `X-Frame-Options` are not bypassed; Chrome internal pages cannot be embedded.
+- Required permissions are `sidePanel` and `storage`, plus limited GAS host access. `bookmarks` is optional and requested only on explicit selection. The extension never modifies Chrome bookmarks.
+- Settings use `chrome.storage.local`; blackout uses `chrome.storage.session`. Imported data is held in memory for the import screen, not stored in extension settings or logged. Only the selected folder's entries are sent to the configured portal.
+- Portal credentials remain in GAS. A per-frame nonce, exact origins, request IDs, and a versioned capability bind the import bridge. The iframe sandbox does not allow arbitrary top-level navigation.
+- Blackout hides content and disables interaction. It does not log out, stop network traffic, or conceal Chrome's own panel header.
+- No analytics, content scripts, broad website host permissions, or separate backend.
 
 ## Development
 
@@ -59,10 +66,10 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-Tests use mocked HTTPS pages and do not verify real site sign-in. Check site-specific embedding in Chrome before relying on it. Generated `.wxt` and `.output` directories are not committed. No sibling repository is needed to install, build, or test Alcove.
+Both repositories build independently; the extension imports no sibling source files. Browser tests use mocked HTTPS pages, permissions, and bookmark trees. They cover nested GAS iframe communication and explicit import confirmation but do not verify Google sign-in or real spreadsheet writes. Check a deployed portal before release.
 
-Tags must match `package.json`. Pushing a `v*` tag publishes a development ZIP on GitHub Releases; it does not upload to the Chrome Web Store. Release history is recorded in [CHANGELOG.md](CHANGELOG.md).
+Tags must match `package.json`. Pushing a `v*` tag publishes a development ZIP, not a Chrome Web Store release. See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-MIT. Alcove was extracted from [gas-portal](https://github.com/hatappo/gas-portal), retaining the original license. Its icon is a cursive A on a pale sunlit background. See [NOTICE](NOTICE) for icon and font attribution.
+MIT. Formerly Alcove, extracted from gas-portal (now My Portal). The cursive A artwork and warm colors are retained. See [NOTICE](NOTICE) for attribution.

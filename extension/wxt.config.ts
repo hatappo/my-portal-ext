@@ -11,17 +11,18 @@ const icons = { 16: 'icons/16.png', 32: 'icons/32.png', 48: 'icons/48.png', 128:
 export default defineConfig({
   modules: ['@wxt-dev/module-svelte'],
   imports: false,
-  zip: { artifactTemplate: `alcove-${version}-{{browser}}.zip` },
+  zip: { artifactTemplate: `my-portal-ext-${version}-{{browser}}.zip` },
   manifest: {
-    name: 'Alcove',
+    name: 'My Portal Extension',
     version,
-    description: 'Keep your favorite web apps beside your browser tabs.',
+    description: 'A Chrome side panel companion for My Portal, with bookmark import.',
     minimum_chrome_version: '116',
     permissions: ['storage'],
+    optional_permissions: ['bookmarks'],
     host_permissions: ['https://script.google.com/*', 'https://*.googleusercontent.com/*'],
     icons,
-    action: { default_title: 'Open Alcove', default_icon: icons },
-    content_security_policy: { extension_pages: "script-src 'self'; object-src 'none'; frame-src https:; base-uri 'none'" },
+    action: { default_title: 'Open My Portal Extension', default_icon: icons },
+    content_security_policy: { extension_pages: "script-src 'self'; object-src 'none'; frame-src https: http://localhost:* http://*.localhost:* http://127.0.0.1:*; base-uri 'none'" },
   },
   hooks: {
     'build:publicAssets'(wxt, files) {

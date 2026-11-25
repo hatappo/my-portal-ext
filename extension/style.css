@@ -8,7 +8,7 @@ body { margin: 0; font-family: system-ui, sans-serif; color: var(--color-surface
 * { box-sizing: border-box; }
 #app { height: 100dvh; display: flex; flex-direction: column; }
 footer { flex: none; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; padding: 4px 8px; border-top: 1px solid var(--color-surface-200-800); }
-.extension-name { font-size: 10px; font-weight: 400; color: light-dark(#896431, #f3d99b); white-space: nowrap; }
+.extension-name { max-width: 90px; overflow: hidden; text-overflow: ellipsis; font-size: 10px; font-weight: 400; color: light-dark(#896431, #f3d99b); white-space: nowrap; }
 nav { display: flex; gap: 4px; }
 .btn { font-size: 12px; padding: 4px 8px; min-height: 30px; }
 main { padding: 20px 16px; overflow-y: auto; }
@@ -82,3 +82,11 @@ summary { cursor: pointer; font-size: 13px; font-weight: 600; overflow-wrap: any
 .drag-handle:active { cursor: grabbing; }
 .drag-handle svg { width: 18px; height: 18px; }
 .settings-card.drop-target { border-color: var(--color-primary-500); box-shadow: 0 -2px 0 var(--color-primary-500); }
+
+.bookmark-option { display: flex; align-items: center; gap: 8px; font-weight: 400; font-size: 12px; }
+.bookmark-preview { margin-top: 20px; border-top: 1px solid var(--color-surface-200-800); overflow-wrap: anywhere; }
+.bookmark-counts { list-style: disc; padding-inline-start: 20px; margin: 12px 0; font-size: 12px; }
+.bookmark-additions { list-style: none; padding: 0; margin: 12px 0; max-height: 35dvh; overflow: auto; }
+.bookmark-additions li { padding-block: 8px; border-bottom: 1px solid var(--color-surface-200-800); }
+.bookmark-additions strong { display: block; font-size: 12px; font-weight: 500; }
+.bookmark-additions span, .bookmark-additions small { display: block; font-size: 11px; color: var(--color-surface-600-400); }
