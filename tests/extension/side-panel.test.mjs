@@ -322,9 +322,10 @@ test('Multiple URL-only pages switch in the footer and reload only the active fr
   await removeNotes.focus();
   await removeNotes.press('Enter');
   await page.waitForFunction(() => document.querySelectorAll('.settings-card').length === 1);
-  // Removing the tall card changes scrolling and the button's hit-test position.
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await page.getByRole('button', { name: 'Save and connect' }).click();
+  // Removing the tall card also changes the save button's pointer hit-test position.
+  const savePages = page.getByRole('button', { name: 'Save and connect' });
+  await savePages.focus();
+  await savePages.press('Enter');
   await page.waitForFunction(() => document.querySelector('.page-switcher')?.options.length === 1);
   await iframe.waitFor({ state: 'visible' });
   assert.equal(await chooser.locator('option').count(), 1);
