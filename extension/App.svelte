@@ -7,8 +7,10 @@
   import settingsIcon from './assets/settings.svg?raw';
   import eyeIcon from './assets/eye.svg?raw';
   import eyeOffIcon from './assets/eye-off.svg?raw';
+  import BookmarkImport from './BookmarkImport.svelte';
+  import { readyChannel, requestPortal, randomNonce, type PortalChannel } from './portal-bridge';
   import ConnectionSettings from './ConnectionSettings.svelte';
-  import { emptyConfig, restoreConfig, pageRequest, pageLabel, type PanelConfig } from './config';
+  import { emptyConfig, restoreConfig, pageRequest, pageLabel, isPortalUrl, type PanelConfig } from './config';
   let languagePreference = $state<'auto' | 'ja' | 'en'>('auto');
   let browserLanguages = $state(Array.from(navigator.languages));
   let languageBusy = $state(false);
@@ -48,21 +50,35 @@
   }
   let config = $state<PanelConfig>(emptyConfig());
   const activePage = $derived(config.pages.find(page => page.id === config.activePageId));
-  let frames = $state<{ id: string; sourceUrl: string; url: string; version: number }[]>([]);
+  let frames = $state<{ id: string; sourceUrl: string; url: string; version: number; nonce: string }[]>([]);
+  let importing = $state(false);
+  // Cross-origin Window handles must never be wrapped in a deep reactive proxy.
+  let channels = $state.raw<Record<string, PortalChannel>>({});
+  const activeChannel = $derived(activePage ? channels[activePage.id] : undefined);
   let frameVersion = 0;
   const frameUrl = $derived(frames.find(frame => frame.id === config.activePageId)?.url || '');
   let editing = $state(true), error = $state(''), busy = $state(true), loaded = $state(false);
   function connect(force = false) {
     // Retain visited pages. Removed pages or edited URLs discard only their own frame.
     frames = frames.filter(frame => config.pages.some(page => page.id === frame.id && page.url === frame.sourceUrl));
+    channels = Object.fromEntries(Object.entries(channels).filter(([id]) => frames.some(frame => frame.id === id)));
     if (!activePage || (!force && frames.some(frame => frame.id === activePage.id))) return;
-    const nonce = Array.from(crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join('');
+    const nonce = randomNonce();
     const url = pageRequest(config, nonce);
     if (!url) return;
-    const next = { id: activePage.id, sourceUrl: activePage.url, url, version: ++frameVersion };
+    const next = { id: activePage.id, sourceUrl: activePage.url, url, version: ++frameVersion, nonce };
+    channels = Object.fromEntries(Object.entries(channels).filter(([id]) => id !== next.id));
     const existing = frames.findIndex(frame => frame.id === next.id);
     if (existing >= 0) frames[existing] = next;
     else frames.push(next);
+  }
+  async function bookmarkRequest(operation: 'preview' | 'import', payload: unknown) {
+    const channel = activeChannel;
+    const id = config.activePageId;
+    if (!channel || concealed) throw new Error('Could not contact the portal. Reload it and try again.');
+    const result = await requestPortal(channel, operation, $state.snapshot(payload));
+    if (config.activePageId !== id || channels[id]?.nonce !== channel.nonce) throw new Error('The destination changed. Preview again before importing.');
+    return result;
   }
   function closeSettings() { editing = false; }
   async function saveConfig(next: PanelConfig) {
@@ -93,7 +109,7 @@
     } finally { busy = false; }
   }
   function openTab() {
-    if (frameUrl) void browser.tabs.create({ url: frameUrl }).catch(() => { error = 'Could not open the page.'; });
+    if (activePage) void browser.tabs.create({ url: activePage.url }).catch(() => { error = 'Could not open the page.'; });
   }
   async function saveLanguage(event: Event) {
     const input = event.currentTarget as HTMLSelectElement;
@@ -114,6 +130,14 @@
   onMount(() => {
     const updateBrowserLanguage = () => { browserLanguages = Array.from(navigator.languages); };
     window.addEventListener('languagechange', updateBrowserLanguage);
+    const receiveReady = (event: MessageEvent) => {
+      const frame = frames.find(frame => frame.nonce === event.data?.nonce && isPortalUrl(frame.sourceUrl));
+      if (!frame) return;
+      const channel = readyChannel(event, frame.nonce);
+      const previous = channels[frame.id];
+      if (channel && (!previous || previous.source === channel.source)) channels = { ...channels, [frame.id]: channel };
+    };
+    window.addEventListener('message', receiveReady);
     let disposed = false;
     let privacyChanged = false;
     const syncPrivacy = (changes: Record<string, { newValue?: unknown }>, area: string) => {
@@ -139,6 +163,7 @@
     return () => {
       disposed = true;
       window.removeEventListener('languagechange', updateBrowserLanguage);
+      window.removeEventListener('message', receiveReady);
       browser.storage.onChanged.removeListener(syncPrivacy);
     };
   });
@@ -146,9 +171,11 @@
 
 <div class="panel-content" class:concealed>
 <div class="panel-body" inert={concealed} aria-hidden={concealed}>
-{#if editing}
+{#if importing}
+  <BookmarkImport {t} pageName={activePage ? pageLabel(activePage) : ''} request={bookmarkRequest} onclose={() => { importing = false; }} />
+{:else if editing}
   <main id="extension-settings">
-    <div class="settings-title-row"><h1>{t('Alcove settings')}</h1><button class="btn icon-button" type="button" disabled={busy} onclick={closeSettings} aria-label={t('Close settings')} title={t('Close settings')}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg></button></div>
+    <div class="settings-title-row"><h1>{t('My Portal Extension settings')}</h1><button class="btn icon-button" type="button" disabled={busy} onclick={closeSettings} aria-label={t('Close settings')} title={t('Close settings')}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg></button></div>
     {#if loaded}
       <ConnectionSettings {config} {t} onsave={saveConfig} oncancel={closeSettings} />
     {/if}
@@ -169,16 +196,16 @@
 {/if}
 {#if error}<p class="status error" role="alert">{t(error)}</p>{/if}
 {#each frames as frame (frame.id)}
-  {#key frame.version}<iframe src={frame.url} title={pageLabel(config.pages.find(page => page.id === frame.id)!)} hidden={editing || frame.id !== config.activePageId} inert={editing || frame.id !== config.activePageId} sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads" referrerpolicy="no-referrer"></iframe>{/key}
+  {#key frame.version}<iframe src={frame.url} title={pageLabel(config.pages.find(page => page.id === frame.id)!)} hidden={editing || importing || frame.id !== config.activePageId} inert={editing || importing || frame.id !== config.activePageId} sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads" referrerpolicy="no-referrer"></iframe>{/key}
 {/each}
-{#if !editing && !frameUrl}<main class="empty-panel"><p>{t('No pages yet.')}</p><button class="btn preset-tonal" onclick={() => { editing = true; }}>{t('Open settings')}</button></main>{/if}
+{#if !editing && !importing && !frameUrl}<main class="empty-panel"><p>{t('No pages yet.')}</p><button class="btn preset-tonal" onclick={() => { editing = true; }}>{t('Open settings')}</button></main>{/if}
 
 </div>
 </div>
 <footer class:concealed>
   <span class="extension-name">{extensionName}</span>
   {#if config.pages.length}
-    <select class="select page-switcher" aria-label={t('Switch page')} value={config.activePageId} disabled={concealed || editing || busy} onchange={switchPage}>
+    <select class="select page-switcher" aria-label={t('Switch page')} value={config.activePageId} disabled={concealed || editing || importing || busy} onchange={switchPage}>
       {#each config.pages as page (page.id)}<option value={page.id}>{concealed ? '•••' : pageLabel(page)}</option>{/each}
     </select>
   {/if}
@@ -187,9 +214,10 @@
       <span class="privacy-current" aria-hidden="true">{@html privacyMode ? eyeOffIcon : eyeIcon}</span>
       <span class="privacy-action" aria-hidden="true">{@html privacyMode ? eyeIcon : eyeOffIcon}</span>
     </button>
+    <button id="import-bookmarks" class="btn icon-button" disabled={!activeChannel || importing || editing || concealed || busy} onclick={() => { importing = true; }} aria-label={t('Import bookmarks')} title={t(activeChannel ? 'Import bookmarks' : 'Open an updated portal to import bookmarks.')}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2zM12 6v7m-3-3 3 3 3-3" /></svg></button>
     <button class="btn icon-button" disabled={!activePage || concealed} onclick={openTab} aria-label={t('Open tab')} title={t('Open tab')}>{@html externalLinkIcon}</button>
-    <button class="btn icon-button" disabled={!activePage || editing || concealed} onclick={() => connect(true)} aria-label={t('Reload')} title={t('Reload')}>{@html refreshIcon}</button>
-    <button class="btn icon-button" disabled={concealed || busy} aria-expanded={editing} aria-controls="extension-settings" onclick={() => { editing = !editing; }} aria-label={t('Settings')} title={t('Settings')}>{@html settingsIcon}</button>
+    <button class="btn icon-button" disabled={!activePage || editing || importing || concealed} onclick={() => connect(true)} aria-label={t('Reload')} title={t('Reload')}>{@html refreshIcon}</button>
+    <button class="btn icon-button" disabled={concealed || importing || busy} aria-expanded={editing} aria-controls="extension-settings" onclick={() => { editing = !editing; }} aria-label={t('Settings')} title={t('Settings')}>{@html settingsIcon}</button>
 
   </nav>
   <span id="privacy-keyboard-help" class="sr-only">{t('Press Enter or Space once to hide content, twice to show it.')}</span>

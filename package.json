@@ -1,8 +1,8 @@
 {
-  "name": "alcove",
-  "version": "0.2.0",
+  "name": "my-portal-ext",
+  "version": "0.3.0",
   "private": true,
-  "description": "Keep your favorite web apps beside your browser tabs.",
+  "description": "A Chrome side panel companion for My Portal, with bookmark import.",
   "type": "module",
   "license": "MIT",
   "packageManager": "npm@12.2.2",
@@ -37,10 +37,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/hatappo/alcove.git"
+    "url": "https://github.com/hatappo/my-portal-ext.git"
   },
   "bugs": {
-    "url": "https://github.com/hatappo/alcove/issues"
+    "url": "https://github.com/hatappo/my-portal-ext/issues"
   },
-  "homepage": "https://github.com/hatappo/alcove#readme"
+  "homepage": "https://github.com/hatappo/my-portal-ext#readme"
 }

@@ -4,9 +4,11 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { createServer } from 'node:http';
+import { i18n } from '../../extension/i18n.js';
 
 const output = path.resolve('extension/.output/chrome-mv3');
-const portalUrl = 'https://script.google.com/a/macros/clap-s.com/s/test-deployment/exec?sidePanel=1&panelNonce={nonce}#links';
+const portalUrl = 'https://script.google.com/a/macros/clap-s.com/s/test-deployment/exec#links';
 
 test('Production permissions are limited to the panel, local settings, and GAS hosts', () => {
   const manifest = JSON.parse(readFileSync(path.join(output, 'manifest.json'), 'utf8'));
@@ -15,12 +17,13 @@ test('Production permissions are limited to the panel, local settings, and GAS h
   assert.equal(manifest.content_scripts, undefined);
   assert.equal(manifest.declarative_net_request, undefined);
   assert.equal(manifest.optional_host_permissions, undefined);
+  assert.deepEqual(manifest.optional_permissions, ['bookmarks']);
   assert.match(manifest.content_security_policy.extension_pages, /frame-src https:/);
   assert.equal(manifest.version, JSON.parse(readFileSync('package.json', 'utf8')).version);
   assert.match(manifest.content_security_policy.extension_pages, /script-src 'self'/);
 });
 
-test('Packaged icons cover toolbar and management sizes with the Alcove artwork', () => {
+test('Packaged icons cover toolbar and management sizes with the My Portal Extension artwork', () => {
   const manifest = JSON.parse(readFileSync(path.join(output, 'manifest.json'), 'utf8'));
   assert.deepEqual(Object.keys(manifest.icons), ['16', '32', '48', '128']);
   assert.deepEqual(manifest.action.default_icon, manifest.icons);
@@ -59,7 +62,7 @@ async function assertSavedPage(page, language) {
   assert.equal(config.parameterSets, undefined);
 }
 
-test('Unpacked extension saves page configuration, expands URL templates, reloads and restores its connection', { timeout: 60000 }, async t => {
+test('Unpacked extension saves page configuration, adds connection parameters internally, reloads and restores its connection', { timeout: 60000 }, async t => {
   const { page, context, id } = await extensionPage(t);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -91,11 +94,10 @@ test('Unpacked extension saves page configuration, expands URL templates, reload
   assert.equal(await page.getByRole('status').count(), 0, 'No site-specific readiness handshake');
   await page.getByRole('button', { name: 'Reload', exact: true }).click();
   await page.waitForFunction(old => document.querySelector('iframe').src !== old, first.href);
-  const openedUrl = await page.locator('iframe').getAttribute('src');
   const opened = context.waitForEvent('page');
   await page.getByRole('button', { name: 'Open tab' }).click();
   const tab = await opened;
-  await tab.waitForURL(openedUrl);
+  await tab.waitForURL(portalUrl);
   await tab.close();
   await page.reload();
   await page.locator('iframe').waitFor();
@@ -155,7 +157,7 @@ test('Extension language defaults to Auto, persists independently and keeps the 
   await page.evaluate(() => window.dispatchEvent(new Event('languagechange')));
   assert.equal(await page.locator('html').getAttribute('lang'), 'en');
   await assertSavedPage(page, 'en');
-  assert.equal(await page.locator('footer button svg:visible').count(), 4);
+  assert.equal(await page.locator('footer button svg:visible').count(), 5);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await page.screenshot({ path: '/tmp/gas-portal-extension-settings-en.png', fullPage: true });
 });
@@ -181,7 +183,7 @@ test('Footer hides on one activation and restores on two, preserving the mounted
   await iframe.evaluate(frame => { frame.dataset.identity = 'retained'; });
   const src = await iframe.getAttribute('src');
   assert.equal(await page.locator('header').count(), 0);
-  assert.equal(await page.locator('.extension-name').innerText(), 'Alcove');
+  assert.equal(await page.locator('.extension-name').innerText(), 'My Portal Extension');
   const footer = await page.locator('footer').boundingBox();
   assert.equal(Math.round(footer.y + footer.height), 800);
   const toggle = page.locator('#privacy-toggle');
@@ -277,16 +279,16 @@ test('Multiple URL-only pages switch in the footer and reload only the active fr
   const { page, context } = await extensionPage(t, 'en-US', 320);
   await context.route('https://**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><p>Generic page</p>' }));
   await page.getByLabel('Page name', { exact: true }).fill('Docs');
-  await page.getByLabel('Page URL', { exact: true }).fill('https://example.com/docs?mode=compact&request={nonce}#intro');
+  await page.getByLabel('Page URL', { exact: true }).fill('https://example.com/docs?mode=compact#intro');
   await page.getByRole('button', { name: 'Add page', exact: true }).click();
   await page.getByLabel('Page name', { exact: true }).nth(1).fill('Notes');
-  await page.getByLabel('Page URL', { exact: true }).nth(1).fill('https://example.org/notes?request={nonce}');
+  await page.getByLabel('Page URL', { exact: true }).nth(1).fill('https://example.org/notes');
   await page.getByRole('button', { name: 'Save and connect' }).click();
   const iframe = page.locator('iframe:not([hidden])');
   await iframe.waitFor();
   const first = new URL(await iframe.getAttribute('src'));
   assert.equal(first.searchParams.get('mode'), 'compact');
-  assert.match(first.searchParams.get('request'), /^[a-f0-9]{32}$/);
+  assert.equal(first.searchParams.get('panelNonce'), null);
   assert.equal(first.hash, '#intro');
   assert.equal(await page.getByRole('status').count(), 0, 'Generic pages do not wait for a GAS handshake');
   const chooser = page.getByRole('combobox', { name: 'Switch page' });
@@ -294,7 +296,7 @@ test('Multiple URL-only pages switch in the footer and reload only the active fr
   await page.waitForFunction(() => document.querySelector('iframe:not([hidden])')?.src.startsWith('https://example.org/'));
   assert.equal(await iframe.count(), 1);
   assert.equal(await page.locator('iframe').count(), 2);
-  assert.notEqual(new URL(await iframe.getAttribute('src')).searchParams.get('request'), first.searchParams.get('request'));
+  assert.equal(new URL(await iframe.getAttribute('src')).searchParams.get('panelNonce'), null);
   await page.reload();
   await iframe.waitFor();
   assert.ok((await iframe.getAttribute('src')).startsWith('https://example.org/'));
@@ -307,18 +309,23 @@ test('Multiple URL-only pages switch in the footer and reload only the active fr
   await page.waitForFunction(() => !document.querySelector('iframe:not([hidden])')?.dataset.old);
   assert.equal(await iframe.getAttribute('src'), 'https://example.org/notes?mode=relaxed', 'Reload remounts even without a nonce');
   await chooser.selectOption({ label: 'Docs' });
-  await page.waitForFunction(() => document.querySelector('iframe:not([hidden])')?.src.startsWith('https://example.com/docs?mode=compact&request='));
+  await page.waitForFunction(() => document.querySelector('iframe:not([hidden])')?.src.startsWith('https://example.com/docs?mode=compact'));
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   const footer = await page.locator('footer').boundingBox();
   assert.ok(footer.height <= 45, 'The selector must not grow the footer to two rows');
-  await page.screenshot({ path: '/tmp/alcove-pages.png' });
+  await page.screenshot({ path: '/tmp/my-portal-ext-pages.png' });
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.screenshot({ path: '/tmp/alcove-settings.png', fullPage: true });
-  await page.getByRole('button', { name: 'Remove page Notes' }).click();
+  await page.screenshot({ path: '/tmp/my-portal-ext-settings.png', fullPage: true });
+  // Use keyboard activation after scrolling the settings overlay above a cross-origin frame.
+  // Chromium can retain the frame's old pointer hit-test region for a compositor frame.
+  const removeNotes = page.getByRole('button', { name: 'Remove page Notes' });
+  await removeNotes.focus();
+  await removeNotes.press('Enter');
   await page.waitForFunction(() => document.querySelectorAll('.settings-card').length === 1);
-  // Removing the tall card changes scrolling and the button's hit-test position.
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await page.getByRole('button', { name: 'Save and connect' }).click();
+  // Removing the tall card also changes the save button's pointer hit-test position.
+  const savePages = page.getByRole('button', { name: 'Save and connect' });
+  await savePages.focus();
+  await savePages.press('Enter');
   await page.waitForFunction(() => document.querySelector('.page-switcher')?.options.length === 1);
   await iframe.waitFor({ state: 'visible' });
   assert.equal(await chooser.locator('option').count(), 1);
@@ -340,7 +347,7 @@ test('Legacy URL is restored and failed configuration saves keep the draft and c
   await page.getByRole('alert').waitFor();
   assert.equal(await page.getByLabel('Page name', { exact: true }).inputValue(), 'My portal');
   assert.equal(await page.locator('iframe').getAttribute('src'), src);
-  assert.equal(await page.getByRole('combobox', { name: 'Switch page' }).locator('option:checked').innerText(), 'GAS Portal');
+  assert.equal(await page.getByRole('combobox', { name: 'Switch page' }).locator('option:checked').innerText(), 'My Portal');
   assert.deepEqual(await page.evaluate(() => globalThis.chrome.storage.local.get(null)), { portalUrl });
 });
 
@@ -373,10 +380,10 @@ test('Settings exposes a selectable extension ID and its close button preserves 
 test('Page cards support drag and keyboard reordering, persist order, and wrap long URLs', { timeout: 60000 }, async t => {
   const { page, context } = await extensionPage(t, 'en-US', 600);
   await context.route('https://**/*', route => route.fulfill({ body: '<p>Mock page</p>', contentType: 'text/html' }));
-  await page.getByRole('heading', { name: 'Alcove settings', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'My Portal Extension settings', exact: true }).waitFor();
   assert.ok(await page.locator('#extension-id').evaluate(el => el.clientWidth < el.parentElement.clientWidth));
   assert.ok(await page.locator('#extension-language').evaluate(el => el.clientWidth < el.parentElement.clientWidth));
-  const longUrl = 'https://example.com/' + 'long-path-'.repeat(35) + '?token={nonce}';
+  const longUrl = 'https://example.com/' + 'long-path-'.repeat(35) + '?mode=compact';
   await page.getByLabel('Page name', { exact: true }).fill('First');
   await page.getByLabel('Page URL', { exact: true }).fill(longUrl);
   await page.getByRole('button', { name: 'Add page', exact: true }).click();
@@ -396,7 +403,7 @@ test('Page cards support drag and keyboard reordering, persist order, and wrap l
   const url = page.getByLabel('Page URL', { exact: true }).nth(1);
   assert.equal(await url.evaluate(el => el.tagName), 'TEXTAREA');
   assert.ok(await url.evaluate(el => el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1));
-  await page.screenshot({ path: '/tmp/alcove-wrap-reorder.png', fullPage: true });
+  await page.screenshot({ path: '/tmp/my-portal-ext-wrap-reorder.png', fullPage: true });
   await page.getByRole('button', { name: 'Save and connect' }).click();
   await page.locator('iframe').waitFor();
   assert.deepEqual(await page.locator('.page-switcher option').allTextContents(), ['Second', 'First']);
@@ -441,10 +448,10 @@ test('Visited pages keep their document state; reload, URL edits and deletion af
     return route.fulfill({ body: '<!doctype html><input aria-label="Draft"><p>Page</p>', contentType: 'text/html' });
   });
   await page.getByLabel('Page name', { exact: true }).fill('One');
-  await page.getByLabel('Page URL', { exact: true }).fill('https://one.example/?nonce={nonce}');
+  await page.getByLabel('Page URL', { exact: true }).fill('https://one.example/');
   await page.getByRole('button', { name: 'Add page', exact: true }).click();
   await page.getByLabel('Page name', { exact: true }).nth(1).fill('Two');
-  await page.getByLabel('Page URL', { exact: true }).nth(1).fill('https://two.example/?nonce={nonce}');
+  await page.getByLabel('Page URL', { exact: true }).nth(1).fill('https://two.example/');
   await page.getByRole('button', { name: 'Save and connect' }).click();
   const active = page.locator('iframe:not([hidden])');
   const draft = page.frameLocator('iframe:not([hidden])').getByLabel('Draft');
@@ -465,7 +472,7 @@ test('Visited pages keep their document state; reload, URL edits and deletion af
   assert.equal(await page.locator('iframe[hidden]').evaluate(el => el.inert), true);
   assert.equal(requests.length, 2, 'Switching back does not request the document again');
   await page.getByRole('button', { name: 'Reload', exact: true }).click();
-  await page.waitForFunction(old => document.querySelector('iframe:not([hidden])')?.src !== old, firstUrl);
+  await page.waitForFunction(() => !document.querySelector('iframe:not([hidden])')?.dataset.identity);
   await draft.waitFor();
   assert.equal(await draft.inputValue(), '');
   assert.equal(requests.length, 3);
@@ -500,4 +507,95 @@ test('Visited pages keep their document state; reload, URL edits and deletion af
   await active.waitFor();
   assert.equal(await page.locator('iframe').count(), 1);
   assert.equal(await active.getAttribute('src'), 'https://changed.example/');
+});
+
+for (const locale of ['en-US', 'ja-JP']) test(`Bookmark import previews only the chosen folder, requires confirmation and preserves the frame (${locale})`, { timeout: 60000 }, async t => {
+  const { page, context, id } = await extensionPage(t, locale, 320);
+  const tr = key => i18n.t(key, locale.startsWith('ja') ? 'ja' : 'en');
+  await context.route('https://**/*', route => {
+    const url = new URL(route.request().url());
+    if (url.hostname === 'script.google.com') return route.fulfill({ contentType: 'text/html', body: '<iframe src="https://abc-script.googleusercontent.com/panel?panelNonce=' + url.searchParams.get('panelNonce') + '"></iframe>' });
+    return route.fulfill({ contentType: 'text/html', body: `<!doctype html><body>Mock portal<script>
+      const nonce = new URL(location.href).searchParams.get('panelNonce');
+      window.importCalls = [];
+      top.postMessage({type:'gas-portal:side-panel-ready',nonce,capabilities:['bookmarks-v1']}, 'chrome-extension://${id}');
+      addEventListener('message', event => {
+        const request = event.data;
+        if (event.origin !== 'chrome-extension://${id}' || request.nonce !== nonce || request.type !== 'my-portal:bookmarks-request') return;
+        window.importCalls.push(request);
+        const additions = request.payload.bookmarks.filter(item => item.url !== 'https://existing.test/').map((item,i) => ({...item,id:'chrome-'+i}));
+        top.postMessage({type:'my-portal:bookmarks-response',nonce,requestId:request.requestId,result:{ok:true,additions,duplicates:1,invalid:0,received:request.payload.bookmarks.length,added:request.operation==='import'?additions.length:undefined,destination:{id:'sheet-1',sheetId:7,title:'Work links',name:'Links'}}}, event.origin);
+      });
+    </script>` });
+  });
+  await page.getByLabel(tr('Page URL')).fill(portalUrl);
+  await page.getByRole('button', { name: tr('Save and connect') }).click();
+  await page.waitForFunction(() => !document.getElementById('import-bookmarks').disabled);
+  const iframe = await page.locator('iframe').getAttribute('src');
+  await page.evaluate(() => {
+    chrome.permissions.request = async () => false;
+    chrome.bookmarks = { getTree: async () => [{id:'0',title:'',children:[{id:'1',title:'Work',children:[{id:'2',title:'New link',url:'https://new.test/'},{id:'3',title:'Already exists',url:'https://existing.test/'}]},{id:'4',title:'Private',children:[{id:'5',title:'Private entry',url:'https://private.test/'}]}]}] };
+    globalThis.browser.bookmarks = chrome.bookmarks;
+  });
+  await page.getByRole('button', { name: tr('Import bookmarks'), exact: true }).click();
+  // Chromium must remove the hidden cross-origin surface from hit-test regions.
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.getByRole('button', { name: tr('Choose Chrome bookmarks') }).click();
+  await page.getByRole('alert').filter({ hasText: tr('Bookmark access was not granted.') }).waitFor();
+  await page.evaluate(() => { chrome.permissions.request = async () => true; });
+  await page.getByRole('button', { name: tr('Choose Chrome bookmarks') }).click();
+  await page.getByLabel(tr('Bookmark folder')).selectOption('1');
+  await page.getByLabel(tr('Use folder names as tags')).check();
+  await page.getByRole('button', { name: tr('Preview additions') }).click();
+  await page.getByRole('link', { name: 'Work links / Links' }).waitFor();
+  assert.equal(await page.locator('.bookmark-additions li').count(), 1);
+  await page.screenshot({ path: `/tmp/bookmark-import-preview-${locale}.png`, fullPage: true });
+  assert.ok(!await page.locator('#bookmark-import').textContent().then(text => text.includes('Private entry')));
+  const frame = page.frames().find(f => f.url().startsWith('https://abc-script.googleusercontent.com/'));
+  assert.equal(await frame.evaluate(() => window.importCalls.length), 1, 'Preview never writes');
+  const request = await frame.evaluate(() => window.importCalls[0]);
+  assert.equal(request.payload.bookmarks.length, 2);
+  assert.deepEqual(request.payload.bookmarks[0].tags, ['Work']);
+  const downloaded = page.waitForEvent('download');
+  await page.getByRole('button', { name: tr('Export TSV') }).click();
+  assert.equal((await downloaded).suggestedFilename(), 'links-bookmarks.tsv');
+  await page.getByRole('button', { name: tr('Add to spreadsheet') }).click();
+  await page.getByRole('heading', { name: tr('Import complete') }).waitFor();
+  assert.equal(await frame.evaluate(() => window.importCalls[1].operation), 'import');
+  assert.equal(await frame.evaluate(() => window.importCalls[1].payload.destination.id), 'sheet-1');
+  await page.getByRole('button', { name: tr('Close import') }).click();
+  assert.equal(await page.locator('iframe').getAttribute('src'), iframe, 'Import preserves the portal frame');
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+});
+
+
+test('Local HTTP pages load through the packaged CSP and retain state across switches', { timeout: 60000 }, async t => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'Content-Type': 'text/html' });
+    response.end('<!doctype html><input aria-label="Local draft"><p>Local preview</p>');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const { page } = await extensionPage(t);
+  const port = server.address().port;
+  const urls = [`http://localhost:${port}/#links`, `http://127.0.0.1:${port}/#links`, `http://preview.localhost:${port}/#links`];
+  for (let i = 0; i < urls.length; i++) {
+    if (i) await page.getByRole('button', { name: 'Add page', exact: true }).click();
+    await page.getByLabel('Page name', { exact: true }).nth(i).fill('Local ' + i);
+    await page.getByLabel('Page URL', { exact: true }).nth(i).fill(urls[i]);
+  }
+  await page.getByRole('button', { name: 'Save and connect' }).click();
+  const draft = page.frameLocator('iframe:not([hidden])').getByLabel('Local draft');
+  await draft.fill('Keep my draft');
+  for (let i = 1; i < urls.length; i++) {
+    await page.getByRole('combobox', { name: 'Switch page' }).selectOption({ label: 'Local ' + i });
+    await draft.waitFor();
+    assert.equal(await page.locator('iframe:not([hidden])').getAttribute('src'), urls[i]);
+  }
+  await page.getByRole('combobox', { name: 'Switch page' }).selectOption({ label: 'Local 0' });
+  assert.equal(await draft.inputValue(), 'Keep my draft');
+  assert.equal(await page.locator('#import-bookmarks').isDisabled(), true);
+  await page.reload();
+  await draft.waitFor();
+  assert.equal(await page.locator('iframe:not([hidden])').getAttribute('src'), urls[0]);
 });

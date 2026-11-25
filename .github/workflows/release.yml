@@ -39,11 +39,11 @@ jobs:
       - name: Stage release archive
         run: |
           mkdir -p release
-          cp extension/.output/alcove-*-chrome.zip release/
+          cp extension/.output/my-portal-ext-*-chrome.zip release/
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: extension
-          path: release/alcove-*-chrome.zip
+          path: release/my-portal-ext-*-chrome.zip
           if-no-files-found: error
   publish:
     needs: package
@@ -61,5 +61,5 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$RELEASE_TAG" "release/alcove-${RELEASE_TAG#v}-chrome.zip" \
+          gh release create "$RELEASE_TAG" "release/my-portal-ext-${RELEASE_TAG#v}-chrome.zip" \
             --verify-tag --generate-notes --title "$RELEASE_TAG" --prerelease

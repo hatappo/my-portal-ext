@@ -8,12 +8,26 @@ export function pageLabel(page: PanelPage): string {
   try { return new URL(page.url).host; } catch { return ''; }
 }
 
-/** Keep the placeholder readable in settings; it is expanded only when opening a page. */
+/** Identify deployed GAS web apps, including both Workspace URL forms. */
+export function isPortalUrl(input: string): boolean {
+  try {
+    const url = new URL(input);
+    return url.origin === 'https://script.google.com' && !url.username && !url.password &&
+      /^\/(?:macros\/(?:u\/\d+\/)?|a\/(?:macros\/[^/]+\/|[^/]+\/macros\/))s\/[A-Za-z0-9_-]+\/exec$/.test(url.pathname);
+  } catch { return false; }
+}
+/** Persist the ordinary page URL, never transport parameters or nonce templates. */
 export function normalizePageUrl(input: string): string | null {
   try {
     const url = new URL(input.trim());
-    if (url.protocol !== 'https:' || url.username || url.password || /[{}]/.test(url.host)) return null;
-    return url.href.replace(/%7Bnonce%7D/gi, '{nonce}');
+    const localHttp = url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname.endsWith('.localhost') || url.hostname === '127.0.0.1');
+    if ((url.protocol !== 'https:' && !localHttp) || url.username || url.password) return null;
+    if (isPortalUrl(url.href)) {
+      url.searchParams.delete('sidePanel');
+      url.searchParams.delete('panelNonce');
+    }
+    if (/[{}]/.test(url.hostname)) return null;
+    return url.href;
   } catch { return null; }
 }
 export function validateConfig(input: PanelConfig): PanelConfig {
@@ -24,35 +38,16 @@ export function validateConfig(input: PanelConfig): PanelConfig {
     ids.add(page.id);
     if (/^chrome:/i.test(page.url.trim())) throw new Error('Chrome internal pages cannot be displayed in a side panel. Open them in a browser tab.');
     const url = normalizePageUrl(page.url);
-    if (!url) throw new Error('Enter an HTTPS URL without a username or password.');
+    if (!url) throw new Error('Enter an HTTPS URL or a local HTTP URL (localhost or 127.0.0.1), without a username or password.');
     return { id: page.id, name: page.name.trim(), url };
   });
   return { pages, activePageId: pages.some(page => page.id === input.activePageId) ? input.activePageId : pages[0]?.id || '' };
 }
-/** Convert experimental parameter sets to URLs without retaining them in the new model. */
+/** Restore saved pages and normalize older GAS URLs at the boundary. */
 export function restoreConfig(saved: { panelConfig?: unknown; portalUrl?: unknown }): PanelConfig {
-  if (saved.panelConfig !== undefined) {
-    const previous = saved.panelConfig as PanelConfig & { parameterSets?: { id: string; parameters: string }[] };
-    const pages = previous.pages.map(page => {
-      const setId = (page as PanelPage & { parameterSetId?: string }).parameterSetId;
-      const set = previous.parameterSets?.find(item => item.id === setId);
-      if (!set) return page;
-      const url = new URL(page.url);
-      for (const line of set.parameters.split(/\r?\n/)) {
-        if (!line.trim()) continue;
-        const separator = line.indexOf('=');
-        if (separator < 1) throw new Error('Invalid saved parameters');
-        url.searchParams.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
-      }
-      return { ...page, url: url.href };
-    });
-    return validateConfig({ pages, activePageId: previous.activePageId });
-  }
+  if (saved.panelConfig !== undefined) return validateConfig(saved.panelConfig as PanelConfig);
   if (typeof saved.portalUrl === 'string' && normalizePageUrl(saved.portalUrl)) {
-    const url = new URL(saved.portalUrl);
-    url.searchParams.set('sidePanel', '1');
-    url.searchParams.set('panelNonce', '{nonce}');
-    return validateConfig({ pages: [{ id: 'portal', name: 'GAS Portal', url: url.href }], activePageId: 'portal' });
+    return validateConfig({ pages: [{ id: 'portal', name: 'My Portal', url: saved.portalUrl }], activePageId: 'portal' });
   }
   return emptyConfig();
 }
@@ -60,5 +55,10 @@ export function pageRequest(config: PanelConfig, nonce: string): string | null {
   const page = config.pages.find(page => page.id === config.activePageId);
   if (!page) return null;
   if (!/^[a-f0-9]{32}$/.test(nonce)) throw new Error('Invalid panel nonce');
-  return page.url.replaceAll('{nonce}', nonce);
+  const url = new URL(page.url);
+  if (isPortalUrl(page.url)) {
+    url.searchParams.set('sidePanel', '1');
+    url.searchParams.set('panelNonce', nonce);
+  }
+  return url.href;
 }

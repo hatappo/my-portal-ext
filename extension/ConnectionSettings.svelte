@@ -30,7 +30,6 @@
   <fieldset disabled={busy}>
     <section aria-labelledby="pages-title">
       <div class="section-heading"><h2 id="pages-title">{t('Pages')}</h2><button type="button" class="btn preset-tonal" onclick={addPage} disabled={draft.pages.length >= 20}>{t('Add page')}</button></div>
-      <p class="help">{t('URLs can include {nonce}, which is replaced with a new random value whenever you open or reload a page.')}</p>
       <div role="list" aria-label={t('Pages')}>
       {#each draft.pages as page, i (page.id)}
         <div class="settings-card" class:drop-target={dropTarget === page.id && dragging !== page.id} role="listitem" ondragover={(event) => { if (dragging) { event.preventDefault(); dropTarget = page.id; } }} ondrop={(event) => { event.preventDefault(); if (dragging) movePage(dragging, i); dragging = ''; dropTarget = ''; }}>
