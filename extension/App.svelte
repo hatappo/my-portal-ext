@@ -10,12 +10,16 @@
   import externalLinkIcon from './assets/external-link.svg?raw';
   import refreshIcon from './assets/refresh-cw.svg?raw';
   import settingsIcon from './assets/settings.svg?raw';
-  import eyeIcon from './assets/eye.svg?raw';
-  import eyeOffIcon from './assets/eye-off.svg?raw';
+  import lightbulbIcon from './assets/lightbulb.svg?raw';
+  import lightbulbOffIcon from './assets/lightbulb-off.svg?raw';
   import BookmarkImport from './BookmarkImport.svelte';
+  import CommentsPanel from './CommentsPanel.svelte';
+  import CommentVisibility from './CommentVisibility.svelte';
+  import type { CommentDraft } from './comments/background';
   import { readyChannel, requestPortal, randomNonce, matchesChannel, readNavigationState, sendNavigation, type NavigationState, type NavigationTab, type PortalChannel } from './portal-bridge';
   import ConnectionSettings from './ConnectionSettings.svelte';
   import { emptyConfig, restoreConfig, pageRequest, pageLabel, isPortalUrl, isLocalPreviewUrl, type PanelConfig } from './config';
+  let commenting = $state(false), commentDraft = $state<CommentDraft | null>(null);
   let languagePreference = $state<'auto' | 'ja' | 'en'>('auto');
   let browserLanguages = $state(Array.from(navigator.languages));
   let languageBusy = $state(false);
@@ -84,7 +88,7 @@
   function clearNavigationTimer(id: string) { clearTimeout(navigationTimers.get(id)); navigationTimers.delete(id); }
   function forgetNavigation(id: string) { clearNavigationTimer(id); navigation = Object.fromEntries(Object.entries(navigation).filter(([key]) => key !== id)); }
   function commandNavigation(command: {action: 'select'; tab: NavigationTab}) {
-    if (!activeChannel || concealed || editing || importing || !activePage) return;
+    if (!activeChannel || concealed || editing || importing || commenting || !activePage) return;
     try { sendNavigation(activeChannel, command); }
     catch { forgetNavigation(activePage.id); }
   }
@@ -206,6 +210,14 @@
       privacyMode = changes.privacyMode.newValue !== false;
     };
     browser.storage.onChanged.addListener(syncPrivacy);
+    const receiveCommentDraft = (changes: Record<string, { newValue?: unknown }>, area: string) => {
+      if (area !== 'session' || !changes.commentDraft?.newValue) return;
+      commentDraft = changes.commentDraft.newValue as CommentDraft; commenting = true; closeControls();
+    };
+    browser.storage.onChanged.addListener(receiveCommentDraft);
+    void browser.storage.session.get('commentDraft').then(saved => {
+      if (!disposed && !commentDraft && saved.commentDraft) { commentDraft = saved.commentDraft as CommentDraft; commenting = true; }
+    }).catch(() => {});
     void browser.storage.session.get('privacyMode').then(saved => {
       if (!disposed && !privacyChanged) privacyMode = saved.privacyMode === true;
     }).catch(() => {
@@ -226,6 +238,7 @@
       window.removeEventListener('languagechange', updateBrowserLanguage);
       window.removeEventListener('message', receiveReady);
       browser.storage.onChanged.removeListener(syncPrivacy);
+      browser.storage.onChanged.removeListener(receiveCommentDraft);
     };
   });
 </script>
@@ -236,18 +249,19 @@
 <AppBar class={'extension-header' + (concealed ? ' concealed' : '')}>
   <AppBar.Toolbar class="header-toolbar">
   <AppBar.Headline class="header-content" inert={concealed} aria-hidden={concealed}>
-    {#if !editing && !importing && activeNavigation}
+    {#if !editing && !importing && !commenting && activeNavigation}
       <PortalNavigation state={activeNavigation} onselect={tab => commandNavigation({ action: 'select', tab })} />
     {:else}
-      <span class="page-title" title={activePage ? pageLabel(activePage) : ''}>{editing ? t('Extension settings') : importing ? t('Import bookmarks') : activePage ? pageLabel(activePage) : ''}</span>
+      <span class="page-title" title={activePage ? pageLabel(activePage) : ''}>{commenting ? t('Page comments') : editing ? t('Extension settings') : importing ? t('Import bookmarks') : activePage ? pageLabel(activePage) : ''}</span>
     {/if}
   </AppBar.Headline>
   <AppBar.Trail class="header-actions" aria-label={t('Side panel controls')}>
+    <CommentVisibility {t} {concealed} disabled={controlsOpen} />
     <Hint text={privacyLabel} triggerId="privacy-toggle" disabled={controlsOpen}>
       {#snippet children(attributes)}
     <button {...attributes} id="privacy-toggle" class="btn-icon btn-icon-base header-icon hover:preset-tonal" disabled={!privacyReady || privacyBusy} aria-pressed={privacyMode} aria-label={privacyLabel} aria-describedby="privacy-keyboard-help" onclick={togglePrivacy} onblur={() => { lastPrivacyClick = undefined; }} onkeydown={(event) => { if (event.repeat && (event.key === 'Enter' || event.key === ' ')) event.preventDefault(); }}>
-      <span class="privacy-current" aria-hidden="true">{@html privacyMode ? eyeOffIcon : eyeIcon}</span>
-      <span class="privacy-action" aria-hidden="true">{@html privacyMode ? eyeIcon : eyeOffIcon}</span>
+      <span class="privacy-current" aria-hidden="true">{@html privacyMode ? lightbulbOffIcon : lightbulbIcon}</span>
+      <span class="privacy-action" aria-hidden="true">{@html privacyMode ? lightbulbIcon : lightbulbOffIcon}</span>
     </button>
       {/snippet}
     </Hint>
@@ -266,15 +280,16 @@
       {#if config.pages.length}
       <div class="page-chooser">
         <PageSwitcher pages={config.pages} value={config.activePageId} label={t('Switch page')}
-          disabled={concealed || editing || importing || busy} active={controlsOpen} {concealed} onselect={switchPage} />
+          disabled={concealed || editing || importing || commenting || busy} active={controlsOpen} {concealed} onselect={switchPage} />
       </div>
     {/if}
     <div class="control-list" aria-label={t('Side panel controls')}>
-      <button class="btn btn-sm hover:preset-tonal control-item" disabled={!activePage || editing || importing || concealed} onclick={() => { closeControls(); connect(true); }}>{@html refreshIcon}<span>{t('Reload')}</span></button>
+      <button class="btn btn-sm hover:preset-tonal control-item" disabled={!activePage || editing || importing || commenting || concealed} onclick={() => { closeControls(); connect(true); }}>{@html refreshIcon}<span>{t('Reload')}</span></button>
       <button class="btn btn-sm hover:preset-tonal control-item" disabled={!activePage || concealed} onclick={() => { closeControls(); openTab(); }}>{@html externalLinkIcon}<span>{t('Open tab')}</span></button>
-      <button id="import-bookmarks" class="btn btn-sm hover:preset-tonal control-item" disabled={!canImport || importing || editing || concealed || busy} onclick={() => { closeControls(); importing = true; }} aria-label={t('Import bookmarks')} title={t(canImport ? 'Import bookmarks' : 'Open an updated portal to import bookmarks.')}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2zM12 6v7m-3-3 3 3 3-3" /></svg><span>{t('Import bookmarks')}</span></button>
+      <button id="import-bookmarks" class="btn btn-sm hover:preset-tonal control-item" disabled={!canImport || importing || editing || commenting || concealed || busy} onclick={() => { closeControls(); importing = true; }} aria-label={t('Import bookmarks')} title={t(canImport ? 'Import bookmarks' : 'Open an updated portal to import bookmarks.')}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2zM12 6v7m-3-3 3 3 3-3" /></svg><span>{t('Import bookmarks')}</span></button>
+      <button class="btn btn-sm hover:preset-tonal control-item" disabled={concealed || importing || commenting || busy} onclick={() => { closeControls(); commenting = true; }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6A8.4 8.4 0 0 1 12.5 3h.5a8.5 8.5 0 0 1 8 8v.5Z"/></svg><span>{t('Page comments')}</span></button>
       <hr class="hr my-1" />
-      <button class="btn btn-sm hover:preset-tonal control-item settings-control" disabled={concealed || importing || busy} aria-expanded={editing} aria-controls="extension-settings" onclick={() => { closeControls(); editing = !editing; }}>{@html settingsIcon}<span>{t('Extension settings')}</span></button>
+      <button class="btn btn-sm hover:preset-tonal control-item settings-control" disabled={concealed || importing || commenting || busy} aria-expanded={editing} aria-controls="extension-settings" onclick={() => { closeControls(); editing = !editing; }}>{@html settingsIcon}<span>{t('Extension settings')}</span></button>
     </div>
     </Popover.Content>
   </Popover.Positioner>
@@ -285,6 +300,10 @@
 
 <div class="panel-content" class:concealed>
 <div class="panel-body" inert={concealed || controlsOpen} aria-hidden={concealed}>
+{#if commenting}
+  <CommentsPanel {t} draft={commentDraft} onclose={() => { commenting = false; commentDraft = null; void browser.storage.session.remove('commentDraft'); }} />
+{/if}
+<div class="retained-screens" hidden={commenting} inert={commenting}>
 {#if importing}
   <BookmarkImport {t} pageName={activePage ? pageLabel(activePage) : ''} request={bookmarkRequest} onclose={() => { importing = false; }} />
 {:else if editing}
@@ -308,11 +327,12 @@
     </section>
   </main>
 {/if}
+</div>
 {#if error}<p class="status error" role="alert">{t(error)}</p>{/if}
 {#each frames as frame (frame.id)}
-  {#key frame.version}<iframe src={frame.url} title={pageLabel(config.pages.find(page => page.id === frame.id)!)} hidden={editing || importing || frame.id !== config.activePageId} inert={editing || importing || frame.id !== config.activePageId} sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads" referrerpolicy="no-referrer"></iframe>{/key}
+  {#key frame.version}<iframe src={frame.url} title={pageLabel(config.pages.find(page => page.id === frame.id)!)} hidden={editing || importing || commenting || frame.id !== config.activePageId} inert={editing || importing || commenting || frame.id !== config.activePageId} sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads" referrerpolicy="no-referrer"></iframe>{/key}
 {/each}
-{#if !editing && !importing && !frameUrl}<main class="empty-panel"><p>{t('No pages yet.')}</p><button class="btn preset-tonal" onclick={() => { editing = true; }}>{t('Open settings')}</button></main>{/if}
+{#if !editing && !importing && !commenting && !frameUrl}<main class="empty-panel"><p>{t('No pages yet.')}</p><button class="btn preset-tonal" onclick={() => { editing = true; }}>{t('Open settings')}</button></main>{/if}
 
 </div>
 </div>
