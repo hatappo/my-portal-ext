@@ -86,7 +86,11 @@ test('Comments return automatically after reload; stale selections never attach 
   await page.getByRole('button', { name: 'Show comment', exact: true }).waitFor();
   await page.reload();
   await page.locator('[data-my-portal-comments] .bubble').waitFor();
-  await inject(); assert.equal(await page.locator('[data-my-portal-comments] .marker').count(), 1, 'Repeated activation is idempotent');
+  await inject();
+  // WXT invalidates the previous content-script context before restoring asynchronously.
+  await page.locator('[data-my-portal-comments] .bubble').waitFor();
+  assert.equal(await page.locator('[data-my-portal-comments] .marker').count(), 1, 'Repeated activation is idempotent');
+  assert.equal(await page.locator('div[data-my-portal-comments]').count(), 1, 'Repeated activation leaves one overlay');
   await page.locator('#quote').evaluate(element => element.textContent = 'a different paragraph');
   await page.locator('[data-my-portal-comments] .marker').waitFor({ state: 'detached' });
   assert.ok((await panel.evaluate(() => chrome.storage.local.get(null)))['page-comment:' + url]);
