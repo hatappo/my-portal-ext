@@ -26,10 +26,10 @@ async function choosePage(page, option) {
   else await options.getByRole('option').nth(option.index).click();
 }
 
-test('Production permissions are limited to the panel, local settings, and GAS hosts', () => {
+test('HTTP(S) access is required while content scripts remain dynamically restricted', () => {
   const manifest = JSON.parse(readFileSync(path.join(output, 'manifest.json'), 'utf8'));
-  assert.deepEqual(manifest.permissions.toSorted(), ['sidePanel', 'storage']);
-  assert.deepEqual(manifest.host_permissions, ['https://script.google.com/*', 'https://*.googleusercontent.com/*']);
+  assert.deepEqual(manifest.permissions.toSorted(), ['activeTab', 'contextMenus', 'scripting', 'sidePanel', 'storage']);
+  assert.deepEqual(manifest.host_permissions, ['http://*/*', 'https://*/*']);
   assert.equal(manifest.content_scripts, undefined);
   assert.equal(manifest.declarative_net_request, undefined);
   assert.equal(manifest.optional_host_permissions, undefined);
@@ -870,4 +870,18 @@ test('Page dropdown uses themed options, preserves selection on save failure and
   await page.evaluate(() => chrome.storage.session.set({ privacyMode: true }));
   await page.getByRole('listbox').waitFor({ state: 'hidden' });
   assert.equal(await page.locator('iframe:visible').count(), 0);
+});
+
+
+test('Header action icons remain vertically centered beside the comment modes', {timeout:30000}, async t => {
+  const {page}=await extensionPage(t,'en-US',320);
+  await page.locator('#extension-language').waitFor();
+  for(const width of [320,480]) {
+    await page.setViewportSize({width,height:800});
+    const centers=await page.evaluate(()=>['.header-toolbar','.comment-display-control','#privacy-toggle','#privacy-toggle .privacy-current svg','#privacy-toggle .privacy-action svg','#panel-controls-toggle','#panel-controls-toggle svg'].map(selector=>{const rect=document.querySelector(selector).getBoundingClientRect();return {selector,y:rect.y+rect.height/2};}));
+    for(const center of centers) assert.ok(Math.abs(center.y-centers[0].y)<1,`${center.selector} must align with the toolbar at ${width}px`);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  }
+  await page.setViewportSize({width:320,height:800});
+  await page.locator('.extension-header').screenshot({path:'/tmp/my-portal-header-icons.png'});
 });

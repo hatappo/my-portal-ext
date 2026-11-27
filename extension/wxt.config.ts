@@ -17,9 +17,10 @@ export default defineConfig({
     version,
     description: 'A Chrome side panel companion for My Portal, with bookmark import.',
     minimum_chrome_version: '116',
-    permissions: ['storage'],
+    permissions: ['storage', 'activeTab', 'scripting', 'contextMenus'],
     optional_permissions: ['bookmarks'],
-    host_permissions: ['https://script.google.com/*', 'https://*.googleusercontent.com/*'],
+    // Required for restoring page comments without per-site setup. Scripts run only on saved-comment sites.
+    host_permissions: ['http://*/*', 'https://*/*'],
     icons,
     action: { default_title: 'Open My Portal Extension', default_icon: icons },
     content_security_policy: { extension_pages: "script-src 'self'; object-src 'none'; frame-src https: http://localhost:* http://*.localhost:* http://127.0.0.1:*; base-uri 'none'" },

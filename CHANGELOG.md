@@ -2,6 +2,24 @@
 
 All notable changes to My Portal Extension (formerly Alcove) are documented here. Versions follow Semantic Versioning. GitHub releases are development builds; Chrome Web Store publication has not started.
 
+## [0.5.0] - 2026-11-28
+
+### Added
+
+- Local page comments anchored to selected text through Text Fragment URLs, with an editor, JSON export, and automatic restoration on revisits.
+- Header controls for hiding comments, showing markers, or showing all comment bodies; display mode is shared across open panels.
+- Warm speech-bubble markers and expandable comment popovers, with light/dark appearance and reduced-motion support.
+
+### Changed
+
+- Require HTTP(S) site access for page comments. Automatic content scripts run only on sites with saved comments; comment data stays in local extension storage.
+- Use lightbulb icons for panel blackout and align compact header controls.
+
+### Fixed
+
+- Improve comment text contrast and typography in both light and dark appearance.
+- Dismiss lingering menu tooltips when opening the comment editor.
+
 ## [0.4.0] - 2026-11-26
 
 ### Added
